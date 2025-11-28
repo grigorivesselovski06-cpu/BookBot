@@ -1,0 +1,3 @@
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+GOOGLE_CREDS_RAW = os.getenv("GOOGLE_CREDS")
+GOOGLE_CREDS = json.loads(GOOGLE_CREDS_RAW) if GOOGLE_CREDS_RAW else None
