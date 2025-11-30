@@ -54,14 +54,14 @@ def cancel_booking(date, time, player_name):
 # --- Telegram handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 *Welcome!*\n\n"
-    "To start booking lessons, please set your real name first:\n"
-    "👉 /setname Your Name\n\n"
-    "After that, you can book sessions normally, and your saved name will be used automatically.\n\n"
-    "📌 *Available commands:*\n"
-    "• /book – Book a session\n"
-    "• /mybookings – View your booked sessions\n"
-    "• /cancel – Cancel a session\n"
+       "👋 *Welcome to your Personal Practice Booking Bot!*\n\n"
+        "This bot helps you schedule, view, and cancel basketball practice sessions with Coach Grigori.\n\n"
+        "📌 *Available Commands:*\n"
+        "• /book - Schedule a new practice 🏀\n"
+        "• /mybookings - View your booked sessions 📘\n"
+        "• /cancel - Cancel a booking ❎\n\n"
+        "⏳ The bot may take a few seconds to process your request.\n"
+        "Let's get you on the court! 💪"
     )
 
 
@@ -210,3 +210,4 @@ app.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel:"))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, text_handler))
 
 app.run_polling()
+
