@@ -6,7 +6,7 @@ import json
 import os
 
 # --- Telegram bot token ---
-BOT_TOKEN = os.environ.get("BOT_TOKEN")  # safer to set via env var
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 # --- Google Sheets setup ---
 def get_sheet():
@@ -27,151 +27,186 @@ def get_sheet():
 def get_available_slots(date):
     sheet = get_sheet()
     all_records = sheet.get_all_records()
-    free_slots = [row['Time'] for row in all_records if row['Date'] == date and row['Player'] == ""]
-    return free_slots
+    return [row["Time"] for row in all_records if row["Date"] == date and row["Player"] == ""]
 
 def mark_slot_booked(date, time, player_name):
     sheet = get_sheet()
     all_records = sheet.get_all_records()
     for i, row in enumerate(all_records, start=2):
-        if row['Date'] == date and row['Time'] == time:
+        if row["Date"] == date and row["Time"] == time:
             sheet.update_cell(i, 3, player_name)
             break
 
 def get_user_bookings(player_name):
     sheet = get_sheet()
     all_records = sheet.get_all_records()
-    bookings = [(row['Date'], row['Time']) for row in all_records if row['Player'] == player_name]
-    return bookings
+    return [(row["Date"], row["Time"]) for row in all_records if row["Player"] == player_name]
 
 def cancel_booking(date, time, player_name):
     sheet = get_sheet()
     all_records = sheet.get_all_records()
     for i, row in enumerate(all_records, start=2):
-        if row['Date'] == date and row['Time'] == time and row['Player'] == player_name:
+        if row["Date"] == date and row["Time"] == time and row["Player"] == player_name:
             sheet.update_cell(i, 3, "")
             break
 
-# --- NEW: Name setter ---
-async def setname(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) == 0:
-        await update.message.reply_text("Please enter your full name, for example:\n\n/setname John Smith")
-        return
-
-    real_name = " ".join(context.args)
-    context.user_data["real_name"] = real_name
-
-    await update.message.reply_text(f"✅ Your name has been saved as: *{real_name}*\n\nThis name will be used for all bookings.", parse_mode="Markdown")
-
-def get_saved_name(context):
-    return context.user_data.get("real_name", None)
 
 # --- Telegram handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    intro_text = (
+    await update.message.reply_text(
         "👋 *Welcome!*\n\n"
-        "Before booking, please set your real name:\n"
-        "👉 /setname Your Name\n\n"
-        "📌 *Commands:*\n"
-        "• /book - Book a session\n"
-        "• /mybookings - View booked sessions\n"
-        "• /cancel - Cancel a session"
+    "To start booking lessons, please set your real name first:\n"
+    "👉 /setname Your Name\n\n"
+    "After that, you can book sessions normally, and your saved name will be used automatically.\n\n"
+    "📌 *Available commands:*\n"
+    "• /book – Book a session\n"
+    "• /mybookings – View your booked sessions\n"
+    "• /cancel – Cancel a session\n"
     )
-    await update.message.reply_text(intro_text, parse_mode="Markdown")
+
 
 async def book(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    # check if user set their real name
-    real_name = get_saved_name(context)
-    if not real_name:
-        await update.message.reply_text("❗ Please set your name first using:\n/setname Your Name")
-        return
-
     sheet = get_sheet()
     records = sheet.get_all_records()
-    dates = sorted(set(row['Date'] for row in records))
+
+    dates = sorted(set(row["Date"] for row in records))
     if not dates:
         await update.message.reply_text("No available dates right now.")
         return
 
-    keyboard = [[InlineKeyboardButton(date, callback_data=f"date:{date}")] for date in dates]
+    keyboard = [
+        [InlineKeyboardButton(date, callback_data=f"date:{date}")]
+        for date in dates
+    ]
+
     await update.message.reply_text("Choose a date:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    real_name = get_saved_name(context)
-    if not real_name:
-        await update.message.reply_text("❗ Please set your name first:\n/setname Your Name")
-        return
-
-    bookings = get_user_bookings(real_name)
-
-    if not bookings:
-        await update.message.reply_text("❌ You have no booked sessions to cancel.")
-        return
-
-    keyboard = [
-        [InlineKeyboardButton(f"{date} — {time}", callback_data=f"cancel:{date}:{time}")]
-        for date, time in bookings
-    ]
-    await update.message.reply_text("Select a booking to cancel:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def mybookings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    real_name = get_saved_name(context)
-    if not real_name:
-        await update.message.reply_text("❗ Please set your name first:\n/setname Your Name")
-        return
+    await update.message.reply_text("Please type the name to search bookings for:")
+    context.user_data["awaiting_check_name"] = True
 
-    bookings = get_user_bookings(real_name)
 
-    if not bookings:
-        await update.message.reply_text("📘 You have no current bookings.")
-        return
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Please type the name used for the booking you want to cancel:")
+    context.user_data["awaiting_cancel_name"] = True
 
-    keyboard = [
-        [InlineKeyboardButton(f"{date} — {time}", callback_data=f"cancel:{date}:{time}")]
-        for date, time in bookings
-    ]
-    await update.message.reply_text(
-        "📘 Here are your bookings:\n\nTap any booking to cancel it:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
 
-    real_name = get_saved_name(context)
-    if not real_name:
-        await query.edit_message_text("❗ Please set your name first:\n/setname Your Name")
-        return
-
     if data.startswith("date:"):
         date = data.split(":", 1)[1]
         times = get_available_slots(date)
+
         if not times:
-            await query.edit_message_text("Sorry, no slots available on this date.")
+            await query.edit_message_text("No free slots on this date.")
             return
 
-        keyboard = [[InlineKeyboardButton(t, callback_data=f"time:{date}:{t}")] for t in times]
+        keyboard = [
+            [InlineKeyboardButton(t, callback_data=f"time:{date}:{t}")]
+            for t in times
+        ]
+
         await query.edit_message_text(f"Choose a time for {date}:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("time:"):
         _, date, time = data.split(":", 2)
-        mark_slot_booked(date, time, real_name)
-        await query.edit_message_text(f"✅ Booked {date} at {time} for {real_name}")
 
-    elif data.startswith("cancel:"):
-        _, date, time = data.split(":", 2)
-        cancel_booking(date, time, real_name)
-        await query.edit_message_text(f"❎ Session on {date} at {time} cancelled.")
+        context.user_data["pending_date"] = date
+        context.user_data["pending_time"] = time
+        context.user_data["awaiting_player_name"] = True
+
+        await query.edit_message_text(
+            f"You selected {date} at {time}.\n\n"
+            "👉 Please type the *player name* to complete the booking:"
+        )
+
+
+async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    _, date, time, name = query.data.split(":", 3)
+    cancel_booking(date, time, name)
+
+    await query.edit_message_text(
+        f"❎ Booking on {date} at {time} for {name} has been cancelled."
+    )
+
+
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+
+    # Handle booking name input
+    if context.user_data.get("awaiting_player_name"):
+        date = context.user_data["pending_date"]
+        time = context.user_data["pending_time"]
+
+        mark_slot_booked(date, time, text)
+
+        await update.message.reply_text(
+            f"✅ Booking confirmed!\n\n"
+            f"📅 Date: {date}\n"
+            f"⏰ Time: {time}\n"
+            f"👤 Player: {text}"
+        )
+
+        context.user_data.clear()
+        return
+
+    # Handle searching bookings
+    if context.user_data.get("awaiting_check_name"):
+        name = text
+        bookings = get_user_bookings(name)
+
+        if not bookings:
+            await update.message.reply_text("No bookings found.")
+        else:
+            msg = "📘 Bookings for " + name + ":\n\n"
+            for d, t in bookings:
+                msg += f"• {d} — {t}\n"
+            await update.message.reply_text(msg)
+
+        context.user_data.clear()
+        return
+
+    # Handle cancel search name
+    if context.user_data.get("awaiting_cancel_name"):
+        name = text
+        bookings = get_user_bookings(name)
+
+        if not bookings:
+            await update.message.reply_text("No bookings found.")
+            context.user_data.clear()
+            return
+
+        keyboard = [
+            [InlineKeyboardButton(f"{d} — {t}", callback_data=f"cancel:{d}:{t}:{name}")]
+            for d, t in bookings
+        ]
+
+        await update.message.reply_text(
+            "Select the booking to cancel:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        context.user_data.clear()
+        return
+
 
 # --- Main ---
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("setname", setname))
 app.add_handler(CommandHandler("book", book))
-app.add_handler(CommandHandler("cancel", cancel))
 app.add_handler(CommandHandler("mybookings", mybookings))
-app.add_handler(CallbackQueryHandler(handle_callback))
+app.add_handler(CommandHandler("cancel", cancel))
+
+app.add_handler(CallbackQueryHandler(handle_callback, pattern="^(date:|time:)"))
+app.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel:"))
+
+app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, text_handler))
+
 app.run_polling()
