@@ -42,12 +42,14 @@ def get_user_bookings(player_name):
     all_records = sheet.get_all_records()
     return [(row["Date"], row["Time"]) for row in all_records if row["Player"] == player_name]
 
-def cancel_booking(date, time, player_name):
+# ✅ FIXED — cancel based ONLY on date + time
+def cancel_booking(date, time):
     sheet = get_sheet()
     all_records = sheet.get_all_records()
+
     for i, row in enumerate(all_records, start=2):
-        if row["Date"] == date and row["Time"] == time and row["Player"] == player_name:
-            sheet.update_cell(i, 3, "")
+        if row["Date"] == date and row["Time"] == time:
+            sheet.update_cell(i, 3, "")  # Clear the player name
             break
 
 
@@ -125,12 +127,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# ✅ FIXED cancel handler
 async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     _, date, time, name = query.data.split(":", 3)
-    cancel_booking(date, time, name)
+
+    cancel_booking(date, time)  # now only date+time matters
 
     await query.edit_message_text(
         f"❎ Booking on {date} at {time} for {name} has been cancelled."
@@ -210,4 +214,7 @@ app.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel:"))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, text_handler))
 
 app.run_polling()
+
+app.run_polling()
+
 
