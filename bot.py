@@ -1,12 +1,10 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
-import os
 
 # --- Telegram bot token ---
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+BOT_TOKEN = "7645359365:AAEm11MrgsQdYgtAjw5oaxgfiAb7JxmlQ_4"  # replace with your token
 
 # --- Google Sheets setup ---
 def get_sheet():
@@ -16,10 +14,7 @@ def get_sheet():
         "https://www.googleapis.com/auth/drive.file",
         "https://www.googleapis.com/auth/drive"
     ]
-
-    keyfile_dict = json.loads(os.environ.get("GOOGLE_CREDS_JSON"))
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(keyfile_dict, scope)
-
+    creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
     client = gspread.authorize(creds)
     sheet = client.open("Coach_Grigori_Bookings").sheet1
     return sheet
@@ -27,41 +22,39 @@ def get_sheet():
 def get_available_slots(date):
     sheet = get_sheet()
     all_records = sheet.get_all_records()
-    return [row["Time"] for row in all_records if row["Date"] == date and row["Player"] == ""]
+    free_slots = [row['Time'] for row in all_records if row['Date'] == date and row['Player'] == ""]
+    return free_slots
 
 def mark_slot_booked(date, time, player_name):
     sheet = get_sheet()
     all_records = sheet.get_all_records()
     for i, row in enumerate(all_records, start=2):
-        if row["Date"] == date and row["Time"] == time:
+        if row['Date'] == date and row['Time'] == time:
             sheet.update_cell(i, 3, player_name)
             break
 
 def get_user_bookings(player_name):
     sheet = get_sheet()
     all_records = sheet.get_all_records()
-    return [(row["Date"], row["Time"]) for row in all_records if row["Player"] == player_name]
+    bookings = [
+        (row['Date'], row['Time'])
+        for row in all_records
+        if row['Player'] == player_name
+    ]
+    return bookings
 
-# --- FIXED cancel_booking using sheet.find ---
-def cancel_booking(date, time):
+def cancel_booking(date, time, player_name):
     sheet = get_sheet()
-    try:
-        # Find all rows with the matching date in column A
-        all_date_cells = sheet.findall(date, in_column=1)
-        for cell in all_date_cells:
-            row_number = cell.row
-            time_value = sheet.cell(row_number, 2).value
-            if time_value == time:
-                sheet.update_cell(row_number, 3, "")  # Clear Player
-                return True
-        return False
-    except gspread.exceptions.CellNotFound:
-        return False
+    all_records = sheet.get_all_records()
+    for i, row in enumerate(all_records, start=2):
+        if row['Date'] == date and row['Time'] == time and row['Player'] == player_name:
+            sheet.update_cell(i, 3, "")
+            break
 
 # --- Telegram handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-       "👋 *Welcome to your Personal Practice Booking Bot!*\n\n"
+    intro_text = (
+        "👋 *Welcome to your Personal Practice Booking Bot!*\n\n"
         "This bot helps you schedule, view, and cancel basketball practice sessions with Coach Grigori.\n\n"
         "📌 *Available Commands:*\n"
         "• /book - Schedule a new practice 🏀\n"
@@ -70,157 +63,99 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⏳ The bot may take a few seconds to process your request.\n"
         "Let's get you on the court! 💪"
     )
-
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=intro_text,
+        parse_mode="Markdown"
+    )
 
 async def book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sheet = get_sheet()
     records = sheet.get_all_records()
-
-    dates = sorted(set(row["Date"] for row in records))
+    dates = sorted(set(row['Date'] for row in records))
     if not dates:
         await update.message.reply_text("No available dates right now.")
         return
 
+    keyboard = [[InlineKeyboardButton(date, callback_data=f"date:{date}")] for date in dates]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Choose a date:", reply_markup=reply_markup)
+
+# --- /cancel command ---
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user.first_name
+    bookings = get_user_bookings(user)
+
+    if not bookings:
+        await update.message.reply_text("❌ You have no booked sessions to cancel.")
+        return
+
     keyboard = [
-        [InlineKeyboardButton(date, callback_data=f"date:{date}")]
-        for date in dates
+        [InlineKeyboardButton(f"{date} — {time}", callback_data=f"cancel:{date}:{time}")]
+        for date, time in bookings
     ]
 
-    await update.message.reply_text("Choose a date:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(
+        "Select a booking to cancel:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-
+# --- /mybookings command ---
 async def mybookings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Please type the name to search bookings for:")
-    context.user_data["awaiting_check_name"] = True
+    user = update.message.from_user.first_name
+    bookings = get_user_bookings(user)
 
+    if not bookings:
+        await update.message.reply_text("📘 You have no current bookings.")
+        return
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Please type the name used for the booking you want to cancel:")
-    context.user_data["awaiting_cancel_name"] = True
+    keyboard = [
+        [InlineKeyboardButton(f"{date} — {time}", callback_data=f"cancel:{date}:{time}")]
+        for date, time in bookings
+    ]
 
+    await update.message.reply_text(
+        "📘 Here are your bookings:\n\n"
+        "Tap any booking below to cancel it:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
 
+    # --- User clicked a date ---
     if data.startswith("date:"):
         date = data.split(":", 1)[1]
         times = get_available_slots(date)
-
         if not times:
-            await query.edit_message_text("No free slots on this date.")
+            await query.edit_message_text("Sorry, no slots available on this date.")
             return
 
-        keyboard = [
-            [InlineKeyboardButton(t, callback_data=f"time:{date}:{t}")]
-            for t in times
-        ]
+        keyboard = [[InlineKeyboardButton(t, callback_data=f"time:{date}:{t}")] for t in times]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(f"Choose a time for {date}:", reply_markup=reply_markup)
 
-        await query.edit_message_text(f"Choose a time for {date}:", reply_markup=InlineKeyboardMarkup(keyboard))
-
+    # --- User clicked a time ---
     elif data.startswith("time:"):
         _, date, time = data.split(":", 2)
+        user = query.from_user.first_name
+        mark_slot_booked(date, time, user)
+        await query.edit_message_text(f"Booked {date} at {time} for {user} ✅")
 
-        context.user_data["pending_date"] = date
-        context.user_data["pending_time"] = time
-        context.user_data["awaiting_player_name"] = True
-
-        await query.edit_message_text(
-            f"You selected {date} at {time}.\n\n"
-            "👉 Please type the *player name* to complete the booking:"
-        )
-
-
-# --- FIXED cancel_handler ---
-async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    _, date, time, name = query.data.split(":", 3)
-
-    success = cancel_booking(date, time)
-
-    if success:
-        await query.edit_message_text(
-            f"❎ Booking on {date} at {time} for {name} has been cancelled."
-        )
-    else:
-        await query.edit_message_text(
-            f"⚠️ Failed to cancel booking on {date} at {time}. Please check the schedule."
-        )
-
-
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-
-    # Handle booking name input
-    if context.user_data.get("awaiting_player_name"):
-        date = context.user_data["pending_date"]
-        time = context.user_data["pending_time"]
-
-        mark_slot_booked(date, time, text)
-
-        await update.message.reply_text(
-            f"✅ Booking confirmed!\n\n"
-            f"📅 Date: {date}\n"
-            f"⏰ Time: {time}\n"
-            f"👤 Player: {text}"
-        )
-
-        context.user_data.clear()
-        return
-
-    # Handle searching bookings
-    if context.user_data.get("awaiting_check_name"):
-        name = text
-        bookings = get_user_bookings(name)
-
-        if not bookings:
-            await update.message.reply_text("No bookings found.")
-        else:
-            msg = "📘 Bookings for " + name + ":\n\n"
-            for d, t in bookings:
-                msg += f"• {d} — {t}\n"
-            await update.message.reply_text(msg)
-
-        context.user_data.clear()
-        return
-
-    # Handle cancel search name
-    if context.user_data.get("awaiting_cancel_name"):
-        name = text
-        bookings = get_user_bookings(name)
-
-        if not bookings:
-            await update.message.reply_text("No bookings found.")
-            context.user_data.clear()
-            return
-
-        keyboard = [
-            [InlineKeyboardButton(f"{d} — {t}", callback_data=f"cancel:{d}:{t}:{name}")]
-            for d, t in bookings
-        ]
-
-        await update.message.reply_text(
-            "Select the booking to cancel:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-        context.user_data.clear()
-        return
-
+    # --- User clicked cancel ---
+    elif data.startswith("cancel:"):
+        _, date, time = data.split(":", 2)
+        user = query.from_user.first_name
+        cancel_booking(date, time, user)
+        await query.edit_message_text(f"❎ Your session on {date} at {time} was cancelled.")
 
 # --- Main ---
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("book", book))
-app.add_handler(CommandHandler("mybookings", mybookings))
 app.add_handler(CommandHandler("cancel", cancel))
-
-app.add_handler(CallbackQueryHandler(handle_callback, pattern="^(date:|time:)"))
-app.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel:"))
-
-app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, text_handler))
-
+app.add_handler(CommandHandler("mybookings", mybookings))
+app.add_handler(CallbackQueryHandler(handle_callback))
 app.run_polling()
